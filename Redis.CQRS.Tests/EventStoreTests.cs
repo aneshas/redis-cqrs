@@ -25,29 +25,41 @@ namespace Redis.CQRS.Tests
             var stream = "FooAggregate";
             var aggregateId = "id1234567";
 
-            await _eventStore.SaveAsync(stream, aggregateId, 0, new IDomainEvent[]
+            await _eventStore.SaveAsync(stream, aggregateId, 0, new []
             {
-                new FooEvent(DateTime.MaxValue, aggregateId, 24),
-                new BarEvent(DateTime.MinValue, aggregateId, 38),
+                new EventData(new FooEvent(DateTime.MaxValue, aggregateId, 24)), 
+                new EventData(new BarEvent(DateTime.MinValue, aggregateId, 38)),
             });
 
             var events = (await _eventStore.LoadAsync(stream, aggregateId)).ToArray();
 
             Assert.AreEqual(2, events.Length);
 
-            events.ExpectOne<FooEvent>(e =>
+            Assert.IsTrue(events.Any(data =>
             {
+                var e = data.Event as FooEvent;
+
+                Assert.IsNotNull(e);
+
                 Assert.AreEqual(DateTime.MaxValue, e.CreatedAt);
                 Assert.AreEqual(aggregateId, e.AggregateId);
                 Assert.AreEqual(24, e.FooField);
-            });
 
-            events.ExpectOne<BarEvent>(e =>
+                return true;
+            }));
+
+            Assert.IsTrue(events.Any(data =>
             {
+                var e = data.Event as BarEvent;
+
+                Assert.IsNotNull(e);
+
                 Assert.AreEqual(DateTime.MinValue, e.CreatedAt);
                 Assert.AreEqual(aggregateId, e.AggregateId);
                 Assert.AreEqual(38, e.BarField);
-            });
+
+                return true;
+            }));
         }
 
         // Test concurrency exception

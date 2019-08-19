@@ -4,6 +4,6 @@ namespace Redis.CQRS.Projections
 {
     public interface IHandleEvent<T>
     {
-        Task HandleAsync(StreamEntry<T> entry);
+        Task HandleAsync(EventData<T> eventData);
     }
 }

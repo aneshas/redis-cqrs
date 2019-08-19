@@ -29,7 +29,7 @@ namespace Redis.CQRS
 
         // TODO - Try adding status
         // Add doc comments
-        public async Task SaveAsync(string aggregate, string aggregateId, uint version, IEnumerable<T> eventStream)
+        public async Task SaveAsync(string aggregate, string aggregateId, uint version, IEnumerable<EventData> eventData)
         {
             var db = _connectionMultiplexer.GetDatabase();
 
@@ -39,10 +39,10 @@ namespace Redis.CQRS
 
             // TODO - Do we need transaction ?
 
-            foreach (var @event in eventStream)
+            foreach (var @event in eventData)
             {
                 var eventId = $"{++version}";
-                var serializedEvent = JsonConvert.SerializeObject(@event, _jsonSerializerSettings);
+                var serializedEvent = JsonConvert.SerializeObject(@event.Event, _jsonSerializerSettings);
 
                 tasks.Add(db.StreamAddAsync(
                     stream,
@@ -62,22 +62,25 @@ namespace Redis.CQRS
 
         private static string AggregateStream(string aggregate) => $"{aggregate.ToLower()}:all";
 
-        public async Task<IEnumerable<T>> LoadAsync(string aggregate, string aggregateId)
+        public async Task<IEnumerable<EventData>> LoadAsync(string aggregate, string aggregateId)
         {
             var db = _connectionMultiplexer.GetDatabase();
 
             var streamEntries = await db.StreamReadAsync(StreamName(aggregate, aggregateId), "0-0");
 
-            if (streamEntries == null) return new List<T>();
+            if (streamEntries == null) return new List<EventData>();
 
-            return streamEntries.Select(entry
-                => JsonConvert.DeserializeObject(entry.Values[0].Value, _jsonSerializerSettings) as T);
+            return streamEntries.Select(entry =>
+            {
+                var @event = JsonConvert.DeserializeObject(entry.Values[0].Value, _jsonSerializerSettings) as T;
+                return new EventData(9999, @event);
+            });
         }
 
         private static string StreamName(string aggregate, string aggregateId) =>
             $"{aggregate.ToLower()}:{aggregateId.ToLower()}";
 
-        public Task SubscribeToStreamsAsync(string consumerGroup, int batchSize, string[] streams, Action<StreamEntry<T>> eventHandler)
+        public Task SubscribeToStreamsAsync(string consumerGroup, int batchSize, string[] streams, Action<EventData<T>> eventHandler)
         {
             return Task.CompletedTask;
         }

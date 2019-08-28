@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -23,46 +24,63 @@ namespace Redis.CQRS.Tests
         public async Task TestLoadingSavedEvents()
         {
             var stream = "FooAggregate";
-            var aggregateId = "id1234567";
+            var aggregateId = "id0123";
 
-            await _eventStore.SaveAsync(stream, aggregateId, 0, new []
+            // TODO - Keep this overload for use with no metadata
+            await _eventStore.SaveAsync(stream, aggregateId, 0,  new IDomainEvent[]
             {
-                new EventData(new FooEvent(DateTime.MaxValue, aggregateId, 24)), 
-                new EventData(new BarEvent(DateTime.MinValue, aggregateId, 38)),
+                new FooEvent(DateTime.MaxValue, aggregateId, 24),
+                new BarEvent(DateTime.MinValue, aggregateId, 38),
             });
+
+            // This looks cumbersome ?!
+            // We can use our DomainEvent base class instead of IDomainEvent - does this help? - try it
+            var evts = new List<EventData<IDomainEvent>>
+            {
+                EventData.From(
+                    new Dictionary<string, object>
+                    {
+                        {"user_ip", "127.0.0.1"}
+                    },
+                    new FooEvent(DateTime.MaxValue, aggregateId, 24) as IDomainEvent
+                ),
+                EventData.From(
+                    new Dictionary<string, object>
+                    {
+                        {"user_ip", "127.0.0.2"}
+                    },
+                    new BarEvent(DateTime.MinValue, aggregateId, 38) as IDomainEvent
+                )
+            };
 
             var events = (await _eventStore.LoadAsync(stream, aggregateId)).ToArray();
 
             Assert.AreEqual(2, events.Length);
 
-            Assert.IsTrue(events.Any(data =>
-            {
-                var e = data.Event as FooEvent;
+            var fooEvent = events[0].Event as FooEvent;
 
-                Assert.IsNotNull(e);
+            Assert.AreEqual(1, events[0].Id);
 
-                Assert.AreEqual(DateTime.MaxValue, e.CreatedAt);
-                Assert.AreEqual(aggregateId, e.AggregateId);
-                Assert.AreEqual(24, e.FooField);
+            Assert.IsNotNull(fooEvent);
 
-                return true;
-            }));
+            Assert.AreEqual(DateTime.MaxValue, fooEvent.CreatedAt);
+            Assert.AreEqual(aggregateId, fooEvent.AggregateId);
+            Assert.AreEqual(24, fooEvent.FooField);
 
-            Assert.IsTrue(events.Any(data =>
-            {
-                var e = data.Event as BarEvent;
+            var barEvent = events[1].Event as BarEvent;
 
-                Assert.IsNotNull(e);
+            Assert.AreEqual(2, events[1].Id);
 
-                Assert.AreEqual(DateTime.MinValue, e.CreatedAt);
-                Assert.AreEqual(aggregateId, e.AggregateId);
-                Assert.AreEqual(38, e.BarField);
+            Assert.IsNotNull(barEvent);
 
-                return true;
-            }));
+            Assert.AreEqual(DateTime.MinValue, barEvent.CreatedAt);
+            Assert.AreEqual(aggregateId, barEvent.AggregateId);
+            Assert.AreEqual(38, barEvent.BarField);
         }
 
         // Test concurrency exception
+
+        // Test metadata
 
         // Test subscription
     }

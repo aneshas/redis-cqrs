@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
@@ -9,13 +10,22 @@ namespace Redis.CQRS
 {
     public class EventStore<T> where T : class
     {
-        private const string EventKey = "event_data";
+        // We need to export these in a smarter way (since EventStore is generic)
+        // Make this configurable (then it can also be used to namespace)
+        private const string RedisPrefix = "redis_cqrs_";
+
+        private const string EventKey =  "event_data";
         private const string EventStreamKey = "event_stream";
         private const string EventIdKey = "event_id";
 
         private readonly IConnectionMultiplexer _connectionMultiplexer;
 
         // TODO Default to json serialization but leave an option to provide custom serializer
+
+        // Add RedisPrefix to all of these keys?
+        // debtor:some-debtor-id - aggregate event stream 
+        // debtor:events_all - pointers to aggregate events (aggregate event stream and event id)
+        // debtor:streams - set with all aggregate streams 
 
         private readonly JsonSerializerSettings _jsonSerializerSettings = new JsonSerializerSettings()
         {
@@ -27,22 +37,34 @@ namespace Redis.CQRS
             _connectionMultiplexer = redisConnectionMultiplexer;
         }
 
-        // TODO - Try adding status
-        // Add doc comments
-        public async Task SaveAsync(string aggregate, string aggregateId, uint version, IEnumerable<EventData> eventData)
+        public async Task SaveAsync(string aggregate, string aggregateId, uint version, IEnumerable<EventData<T>> eventData)
         {
+
+        }
+
+        // Add doc comments
+        public async Task SaveAsync(string aggregate, string aggregateId, uint version, IEnumerable<T> events)
+        {
+            if (events == null || !events.Any()) return;
+
+            CheckAggregateArgs(aggregate, aggregateId);
+
             var db = _connectionMultiplexer.GetDatabase();
 
-            var stream = StreamName(aggregate, aggregateId);
+            var stream = AggregateStream(aggregate, aggregateId);
 
-            var tasks = new List<Task>();
+            var tasks = new List<Task>
+            {
+                // We don't test this for failure since it is a convenience
+                db.SetAddAsync(AggregateStreamsSet(aggregate), stream)
+            };
 
             // TODO - Do we need transaction ?
 
-            foreach (var @event in eventData)
+            foreach (var @event in events)
             {
                 var eventId = $"{++version}";
-                var serializedEvent = JsonConvert.SerializeObject(@event.Event, _jsonSerializerSettings);
+                var serializedEvent = JsonConvert.SerializeObject(@event, _jsonSerializerSettings);
 
                 tasks.Add(db.StreamAddAsync(
                     stream,
@@ -50,7 +72,7 @@ namespace Redis.CQRS
                     serializedEvent,
                     messageId: eventId));
 
-                tasks.Add(db.StreamAddAsync(AggregateStream(aggregate), new[]
+                tasks.Add(db.StreamAddAsync(AggregateAllEventsStream(aggregate), new[]
                 {
                     new NameValueEntry(EventStreamKey, stream),
                     new NameValueEntry(EventIdKey, eventId)
@@ -60,30 +82,45 @@ namespace Redis.CQRS
             await Task.WhenAll(tasks);
         }
 
-        private static string AggregateStream(string aggregate) => $"{aggregate.ToLower()}:all";
-
-        public async Task<IEnumerable<EventData>> LoadAsync(string aggregate, string aggregateId)
+        public async Task<IEnumerable<EventData<T>>> LoadAsync(string aggregate, string aggregateId)
         {
+            CheckAggregateArgs(aggregate, aggregateId);
+
             var db = _connectionMultiplexer.GetDatabase();
 
-            var streamEntries = await db.StreamReadAsync(StreamName(aggregate, aggregateId), "0-0");
+            var streamEntries = await db.StreamReadAsync(AggregateStream(aggregate, aggregateId), "0-0");
 
-            if (streamEntries == null) return new List<EventData>();
+            if (streamEntries == null) return new List<EventData<T>>();
 
             return streamEntries.Select(entry =>
             {
                 var @event = JsonConvert.DeserializeObject(entry.Values[0].Value, _jsonSerializerSettings) as T;
-                return new EventData(9999, @event);
+
+                var id = entry.Id.ToString().Split('-');
+
+                return new EventData<T>(long.Parse(id[0]), @event);
             });
         }
 
-        private static string StreamName(string aggregate, string aggregateId) =>
-            $"{aggregate.ToLower()}:{aggregateId.ToLower()}";
+        private static string AggregateStreamsSet(string aggregate) => 
+            $"{RedisPrefix}{aggregate.ToLower()}:streams"; // TODO add constant
 
-        public Task SubscribeToStreamsAsync(string consumerGroup, int batchSize, string[] streams, Action<EventData<T>> eventHandler)
+        private static string AggregateAllEventsStream(string aggregate) => 
+            $"{RedisPrefix}{aggregate.ToLower()}:events_all"; // TODO add constant
+
+        private static string AggregateStream(string aggregate, string aggregateId) =>
+            $"{RedisPrefix}{aggregate.ToLower()}:{aggregateId.ToLower()}";
+
+        private static void CheckAggregateArgs(string aggregate, string aggregateId)
         {
-            return Task.CompletedTask;
+            if (string.IsNullOrWhiteSpace(aggregate) || string.IsNullOrWhiteSpace(aggregateId))
+                throw new InvalidEnumArgumentException("aggregate and aggregateId cannot be null or whitespace");
         }
+
+        //public Task SubscribeToStreamsAsync(string consumerGroup, int batchSize, string[] streams, Action<EventData<T>> eventHandler)
+        //{
+        //    return Task.CompletedTask;
+        //}
 
         // TODO Load events with just stream name overload
 
@@ -93,5 +130,6 @@ namespace Redis.CQRS
         // TODO Choice between subscribing to certain aggregate or all aggregates ... 
 
         // TODO Subscriptions should reconnect
+        // TODO Subscriptions should keep retrying same event if throwing... 
     }
 }

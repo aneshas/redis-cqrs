@@ -1,27 +1,35 @@
-﻿namespace Redis.CQRS
+﻿using System.Collections.Generic;
+using System.Runtime.InteropServices.ComTypes;
+
+namespace Redis.CQRS
 {
-    public class EventData
+    public static class EventData {
+        public static EventData<T> From<T>(Dictionary<string, object> metaData, T @event)
+            where T : class
+        {
+            return new EventData<T>(@event);
+        }
+    }
+
+    public class EventData<T> where T : class
     {
         public long Id { get; }
 
-        public object Event { get; }
+        public T Event { get; }
 
-        public void Ack() { }
+        private EventData() { }
 
-        internal EventData(long id, object @event)
+        internal EventData(long id, T @event)
         {
             Id = id;
             Event = @event;
         }
 
-        public EventData(object @event)
+        internal EventData(T @event)
         {
             Event = @event;
         }
 
-        private EventData() { }
-
-        // Add metadata
-        // Implement implicit conversion to T ?? does it make sense?
+        public static implicit operator T(EventData<T> eventData) => eventData.Event;
     }
 }

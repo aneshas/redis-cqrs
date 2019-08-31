@@ -1,5 +1,8 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using Pipelines.Sockets.Unofficial.Arenas;
 
 namespace Redis.CQRS.Projections
@@ -8,23 +11,17 @@ namespace Redis.CQRS.Projections
     {
         public class Configuration
         {
-            public int BatchSize { get; private set; } = 100;
-
-            public string ConsumerGroupName { get; private set; } 
-                = Assembly.GetExecutingAssembly().FullName;
+            public int BatchSize { get; private set; } = 500;
 
             public void WithBatchSize(int batchSize) =>
                 BatchSize = batchSize < 1 ? 1 : batchSize;
-
-            public void WithConsumerGroupName(string name) =>
-                ConsumerGroupName = name;
         }
+
+        private readonly Configuration _configuration = new Configuration();
 
         private readonly EventStore<T> _eventStore;
 
         private readonly IProjection[] _projections;
-
-        private readonly Configuration _configuration = new Configuration();
 
         public ProjectionAgent(EventStore<T> eventStore, IProjection[] projections)
         {
@@ -36,9 +33,38 @@ namespace Redis.CQRS.Projections
         {
             configure.Invoke(_configuration);
 
-            // Run one subscription for each projection
+            var tasks = _projections.Select(StartSubscription).ToList();
 
-            return null;
+            return Task.WhenAll(tasks);
+        }
+
+        private async Task StartSubscription(IProjection projection)
+        {
+            while (true)
+            {
+                try
+                {
+                    await _eventStore.SubscribeToAggregateStreamsAsync(
+                        projection.GetType().Name,
+                        _configuration.BatchSize,
+                        projection.SubscribeToStreams.ToArray(),
+                        e =>
+                        {
+                            // Call projection event handlers
+                        });
+                }
+                catch (Exception e)
+                {
+                    try
+                    {
+                        Console.WriteLine(e); // TODO - log to ex logger
+                    }
+                    catch
+                    {
+                        // ignored ?
+                    }
+                }
+            }
         }
     }
 }

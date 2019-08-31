@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using Redis.CQRS.Projections;
 using StackExchange.Redis;
 
 namespace Redis.CQRS
@@ -14,7 +15,7 @@ namespace Redis.CQRS
         // Make this configurable (then it can also be used to namespace)
         private const string RedisPrefix = "redis_cqrs_";
 
-        private const string EventKey =  "event_data";
+        private const string EventKey = "event_data";
         private const string EventStreamKey = "event_stream";
         private const string EventIdKey = "event_id";
 
@@ -25,7 +26,8 @@ namespace Redis.CQRS
         // Add RedisPrefix to all of these keys?
         // debtor:some-debtor-id - aggregate event stream 
         // debtor:events_all - pointers to aggregate events (aggregate event stream and event id)
-        // debtor:streams - set with all aggregate streams 
+        // debtor:aggregates - set with all aggregate aggregates 
+        // debtor:events_all:debtors:projection_group - consumer group for aggregate stream per projection
 
         private readonly JsonSerializerSettings _jsonSerializerSettings = new JsonSerializerSettings()
         {
@@ -37,9 +39,9 @@ namespace Redis.CQRS
             _connectionMultiplexer = redisConnectionMultiplexer;
         }
 
-        public async Task SaveAsync(string aggregate, string aggregateId, uint version, IEnumerable<EventData<T>> eventData)
+        public async Task SaveAsync(string aggregate, string aggregateId, uint version,
+            IEnumerable<EventData<T>> eventData)
         {
-
         }
 
         // Add doc comments
@@ -102,25 +104,56 @@ namespace Redis.CQRS
             });
         }
 
-        private static string AggregateStreamsSet(string aggregate) => 
-            $"{RedisPrefix}{aggregate.ToLower()}:streams"; // TODO add constant
-
-        private static string AggregateAllEventsStream(string aggregate) => 
-            $"{RedisPrefix}{aggregate.ToLower()}:events_all"; // TODO add constant
-
-        private static string AggregateStream(string aggregate, string aggregateId) =>
-            $"{RedisPrefix}{aggregate.ToLower()}:{aggregateId.ToLower()}";
-
         private static void CheckAggregateArgs(string aggregate, string aggregateId)
         {
             if (string.IsNullOrWhiteSpace(aggregate) || string.IsNullOrWhiteSpace(aggregateId))
                 throw new InvalidEnumArgumentException("aggregate and aggregateId cannot be null or whitespace");
         }
 
-        //public Task SubscribeToStreamsAsync(string consumerGroup, int batchSize, string[] streams, Action<EventData<T>> eventHandler)
-        //{
-        //    return Task.CompletedTask;
-        //}
+        internal async Task<EventData<T>> LoadAggregateEventAsync(StreamEntry entry)
+        {
+            throw new NotImplementedException();
+        }
+
+        internal async Task SubscribeToAggregateStreamsAsync(
+            string projection,
+            int batchSize,
+            string[] aggregates,
+            Action<EventData<T>> eventHandler)
+        {
+            var db = _connectionMultiplexer.GetDatabase();
+
+            var readers = aggregates.Select(aggregate =>
+                new ConsumerGroupReader<T>(
+                    this,
+                    AggregateConsumerGroup(aggregate, projection),
+                    db,
+                    batchSize,
+                    AggregateAllEventsStream(aggregate))
+            ).ToList();
+            
+            while (true)
+            {
+                foreach (var reader in readers)
+                {
+                    await reader.ReadNextBatchAsync(eventHandler);
+                }
+            }
+        }
+
+        private static string AggregateStreamsSet(string aggregate) =>
+            $"{RedisPrefix}{aggregate.ToLower()}:aggregates"; // TODO add constant
+
+        private static string AggregateConsumerGroup(string aggregate, string projection) =>
+            $"{RedisPrefix}{AggregateAllEventsStream(aggregate)}:{projection.ToLower()}_projection_group";
+        
+        private static string AggregateAllEventsStream(string aggregate) =>
+            $"{RedisPrefix}{aggregate.ToLower()}:events_all"; // TODO add constant
+
+        private static string AggregateStream(string aggregate, string aggregateId) =>
+            $"{RedisPrefix}{aggregate.ToLower()}:{aggregateId.ToLower()}";
+
+        // TODO - Add method to set consumer group id
 
         // TODO Load events with just stream name overload
 

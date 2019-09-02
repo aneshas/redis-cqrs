@@ -36,7 +36,7 @@ namespace Redis.CQRS.Projections
             var startFromId = _checkForPending ? _lastId : ">";
 
             var items = await _db.StreamReadGroupAsync(
-                "GROUP",
+                _stream,
                 _consumerGroup,
                 "redis-cqrs-projection-consumer",
                 startFromId,
@@ -50,7 +50,7 @@ namespace Redis.CQRS.Projections
             {
                 eventHandler.Invoke(await _eventStore.LoadAggregateEventAsync(item));
                 
-                await _db.StreamAcknowledgeAsync("GROUP", _consumerGroup, item.Id);
+                await _db.StreamAcknowledgeAsync(_stream, _consumerGroup, item.Id);
 
                 _lastId = item.Id;
             }
@@ -58,8 +58,14 @@ namespace Redis.CQRS.Projections
 
         private async Task CreateConsumerGroupAsync(string groupName, string streamName)
         {
-            await _db.StreamCreateConsumerGroupAsync(groupName, streamName, 0); // TODO - Is this correct usage
-            // TODO - Check err
+            try
+            {
+                await _db.StreamCreateConsumerGroupAsync(streamName, groupName, StreamPosition.Beginning);
+            }
+            catch (RedisServerException)
+            {
+                // ignore for now - find cleaner way
+            }
         }
     }
 }

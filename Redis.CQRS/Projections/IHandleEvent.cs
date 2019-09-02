@@ -2,8 +2,8 @@
 
 namespace Redis.CQRS.Projections
 {
-    public interface IHandleEvent<T> where T : class
+    public interface IHandleEvent<in T> where T : class
     {
-        Task HandleAsync(EventData<T> eventData);
+        Task HandleAsync(T @event, EventInfo eventInfo);
     }
 }

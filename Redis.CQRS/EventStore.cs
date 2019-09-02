@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Redis.CQRS.Projections;
@@ -94,14 +95,8 @@ namespace Redis.CQRS
 
             if (streamEntries == null) return new List<EventData<T>>();
 
-            return streamEntries.Select(entry =>
-            {
-                var @event = JsonConvert.DeserializeObject(entry.Values[0].Value, _jsonSerializerSettings) as T;
-
-                var id = entry.Id.ToString().Split('-');
-
-                return new EventData<T>(long.Parse(id[0]), @event);
-            });
+            return streamEntries.Select(entry => 
+                DeserializeEvent(entry.Id.ToString(), entry.Values[0].Value));
         }
 
         private static void CheckAggregateArgs(string aggregate, string aggregateId)
@@ -112,10 +107,27 @@ namespace Redis.CQRS
 
         internal async Task<EventData<T>> LoadAggregateEventAsync(StreamEntry entry)
         {
-            throw new NotImplementedException();
+            var db = _connectionMultiplexer.GetDatabase();
+
+            string stream = entry.Values[0].Value;
+            string eventId = entry.Values[1].Value;
+
+            var events = await db.StreamRangeAsync(stream, eventId, eventId);
+
+            return DeserializeEvent(eventId, events[0].Values[0].Value);
+        }
+
+        private EventData<T> DeserializeEvent(string eventId, string value)
+        {
+             var @event = JsonConvert.DeserializeObject(value, _jsonSerializerSettings) as T;
+
+            var id = eventId.Split('-');
+
+            return new EventData<T>(long.Parse(id[0]), @event);
         }
 
         internal async Task SubscribeToAggregateStreamsAsync(
+            CancellationTokenSource cancellationTokenSource, 
             string projection,
             int batchSize,
             string[] aggregates,
@@ -131,8 +143,8 @@ namespace Redis.CQRS
                     batchSize,
                     AggregateAllEventsStream(aggregate))
             ).ToList();
-            
-            while (true)
+
+            while (!cancellationTokenSource.IsCancellationRequested)
             {
                 foreach (var reader in readers)
                 {
@@ -146,7 +158,7 @@ namespace Redis.CQRS
 
         private static string AggregateConsumerGroup(string aggregate, string projection) =>
             $"{RedisPrefix}{AggregateAllEventsStream(aggregate)}:{projection.ToLower()}_projection_group";
-        
+
         private static string AggregateAllEventsStream(string aggregate) =>
             $"{RedisPrefix}{aggregate.ToLower()}:events_all"; // TODO add constant
 

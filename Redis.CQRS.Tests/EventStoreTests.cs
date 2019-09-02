@@ -81,7 +81,5 @@ namespace Redis.CQRS.Tests
         // Test concurrency exception
 
         // Test metadata
-
-        // Test subscription
     }
 }
